@@ -16,6 +16,8 @@ export interface PocketPipeParams {
   receiver?: string;
   filter?: any;
   enforceSelf?: boolean;
+  //
+  subscriberID?: string;
 }
 export interface PocketNextParams {
   caller?: string;
@@ -25,7 +27,6 @@ export interface PocketNextParams {
 }
 export interface PocketDebug {
   debug?: boolean;
-  subscriberID?: string;
 }
 
 export class ObservableWrapper<T> extends Observable<T> {
@@ -200,7 +201,7 @@ export class PocketService {
     const { caller, receiver, filter, enforceSelf, } =
       { caller: null, receiver: null, filter: null, enforceSelf: false, ...p };
     if ( this.pockets[ k ] == null ) { this.register( k ); }
-    return this.pockets[ k ].asObservable( opts ? opts.subscriberID : null ).pipe(
+    return this.pockets[ k ].asObservable( p ? p.subscriberID : null ).pipe(
       eventFilter(),
       pocketReceiverFilter( receiver, { enforceSelf } )
     ) as Observable<PocketData>;
@@ -211,7 +212,7 @@ export class PocketService {
     const { caller, receiver, filter, enforceSelf, } =
       { caller: null, receiver: null, filter: null, enforceSelf: false, ...p };
     if ( this.actions[ k ] == null ) { this.register( k, true ); }
-    return this.actions[ k ].asObservable( opts ? opts.subscriberID : null ).pipe(
+    return this.actions[ k ].asObservable( p ? p.subscriberID : null ).pipe(
       eventFilter(),
       pocketReceiverFilter( receiver, { enforceSelf } )
     ) as Observable<PocketActionData>;
@@ -222,7 +223,7 @@ export class PocketService {
     const { caller, receiver, filter, enforceSelf, } =
       { caller: null, receiver: null, filter: null, enforceSelf: false, ...p };
     if ( this.pockets[ k ] == null ) { this.register( k ); }
-    return this.pockets[ k ].asObservable( opts ? opts.subscriberID : null ).pipe(
+    return this.pockets[ k ].asObservable( p ? p.subscriberID : null ).pipe(
       takeUntil( o ),
       eventFilter(),
       pocketReceiverFilter( receiver, { enforceSelf } ),
@@ -234,7 +235,7 @@ export class PocketService {
     const { caller, receiver, filter, enforceSelf, } =
       { caller: null, receiver: null, filter: null, enforceSelf: false, ...p };
     if ( this.actions[ k ] == null ) { this.register( k, true ); }
-    return this.actions[ k ].asObservable( opts ? opts.subscriberID : null ).pipe(
+    return this.actions[ k ].asObservable( p ? p.subscriberID : null ).pipe(
       takeUntil( o ),
       eventFilter(),
       pocketReceiverFilter( receiver, { enforceSelf } ),
