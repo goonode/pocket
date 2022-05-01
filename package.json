@@ -1,6 +1,6 @@
 {
   "name": "@goonode/pocket",
-  "version": "0.0.10-ng13",
+  "version": "0.0.11-ng13",
   "peerDependencies": {
     "@angular/common": "~13.3.5",
     "@angular/core": "~13.3.5"
