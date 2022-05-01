@@ -2,7 +2,7 @@ import { Injectable, Optional, SkipSelf } from '@angular/core';
 
 import * as R from 'rambda';
 
-import { BehaviorSubject, Observable, pipe, Subject } from 'rxjs';
+import { BehaviorSubject, Observable, Observer, pipe, Subject, Subscription } from 'rxjs';
 import { filter, takeUntil } from 'rxjs/operators';
 
 import { InPocketActionData, IN_POCKET_ACTION } from './pocket.action';
@@ -23,6 +23,34 @@ export interface PocketNextParams {
   filter?: any;
   emitEvent?: boolean;
 }
+export interface PocketDebug {
+  debug?: boolean;
+  subscriberID?: string;
+}
+
+export class ObservableWrapper<T> extends Observable<T> {
+  constructor( private tag: string = null ) { super(); }
+
+  subscribe( observer?: Partial<Observer<T>> ): Subscription;
+  subscribe( next: ( value: T ) => void ): Subscription;
+  subscribe( next?: ( value: T ) => void, error?: ( error: any ) => void, complete?: () => void ): Subscription;
+  subscribe( next?: any, error?: any, complete?: any ): Subscription {
+    const s = super.subscribe( next, error, complete );
+    ( s as unknown as any ).subscriberID = this.tag;
+    return s;
+  }
+}
+
+export class BehaviorSubjectWrapper<T> extends BehaviorSubject<T> {
+  constructor( _value: T ) { super( _value ); }
+
+  asObservable( tag: string = null ): Observable<T> {
+    const obs: any = new ObservableWrapper<T>( tag );
+    obs.source = this;
+    return obs;
+  }
+}
+
 export interface PocketData {
   new: Record<string, any>,
   old?: Record<string, any>,
@@ -43,10 +71,10 @@ export interface PocketActionData {
   emitEvent?: boolean;
 }
 export interface PocketSubject {
-  [ k: string ]: BehaviorSubject<PocketData>;
+  [ k: string ]: BehaviorSubjectWrapper<PocketData>;
 }
 export interface PocketActionSubject {
-  [ k: string ]: BehaviorSubject<PocketActionData>;
+  [ k: string ]: BehaviorSubjectWrapper<PocketActionData>;
 }
 
 export const POCKET_GLOBAL = 'global';
@@ -144,6 +172,7 @@ export class PocketService {
   private module = 'PocketService';
   private pockets: PocketSubject = {};
   private actions: PocketActionSubject = {};
+  private tags: string[] = [];
 
   constructor( @Optional() @SkipSelf() parent?: PocketService ) {
     if ( parent ) {
@@ -153,66 +182,47 @@ export class PocketService {
       );
     }
 
-    this.pockets[ POCKET_GLOBAL ] = new BehaviorSubject<PocketData>( { new: null } );
+    this.pockets[ POCKET_GLOBAL ] = new BehaviorSubjectWrapper<PocketData>( { new: null } );
   }
 
   register( k: string, inaction = false ) {
     if ( inaction ) {
       if ( this.actions[ k ] != null ) { return; }
-      this.actions[ k ] = new BehaviorSubject<PocketActionData>( { action: [] } );
+      this.actions[ k ] = new BehaviorSubjectWrapper<PocketActionData>( { action: [] } );
     } else {
       if ( this.pockets[ k ] != null ) { return; }
-      this.pockets[ k ] = new BehaviorSubject<PocketData>( { new: {} } );
+      this.pockets[ k ] = new BehaviorSubjectWrapper<PocketData>( { new: {} } );
     }
   }
 
   // create a pocket subject and return an observable
-  observe( k: string, p: PocketPipeParams = null ) {
+  observe( k: string, p: PocketPipeParams = null, opts: PocketDebug = null ): Observable<PocketData> {
     const { caller, receiver, filter, enforceSelf, } =
       { caller: null, receiver: null, filter: null, enforceSelf: false, ...p };
-    if ( this.pockets[ k ] != null ) {
-      return this.pockets[ k ].asObservable().pipe(
-        eventFilter(),
-        pocketReceiverFilter( receiver, { enforceSelf } )
-      ) as Observable<PocketData>;
-    }
-    this.register( k );
-    return this.pockets[ k ].asObservable().pipe(
+    if ( this.pockets[ k ] == null ) { this.register( k ); }
+    return this.pockets[ k ].asObservable( opts ? opts.subscriberID : null ).pipe(
       eventFilter(),
       pocketReceiverFilter( receiver, { enforceSelf } )
     ) as Observable<PocketData>;
   }
 
   // create an action subject and return an observable
-  action( k: string, p: PocketPipeParams = null ) {
+  action( k: string, p: PocketPipeParams = null, opts: PocketDebug = null ): Observable<PocketActionData> {
     const { caller, receiver, filter, enforceSelf, } =
       { caller: null, receiver: null, filter: null, enforceSelf: false, ...p };
-    if ( this.actions[ k ] != null ) {
-      return this.actions[ k ].asObservable().pipe(
-        eventFilter(),
-        pocketReceiverFilter( receiver, { enforceSelf } )
-      ) as Observable<PocketActionData>;
-    }
-    this.register( k, true );
-    return this.actions[ k ].asObservable().pipe(
+    if ( this.actions[ k ] == null ) { this.register( k, true ); }
+    return this.actions[ k ].asObservable( opts ? opts.subscriberID : null ).pipe(
       eventFilter(),
       pocketReceiverFilter( receiver, { enforceSelf } )
     ) as Observable<PocketActionData>;
   }
 
   // create a pocket subject and return an observable with a takeUntil operator piped in
-  observeUntil( k: string, o: Observable<any> | Subject<any>, p: PocketPipeParams = null ) {
+  observeUntil( k: string, o: Observable<any> | Subject<any>, p: PocketPipeParams = null, opts: PocketDebug = null ) {
     const { caller, receiver, filter, enforceSelf, } =
       { caller: null, receiver: null, filter: null, enforceSelf: false, ...p };
-    if ( this.pockets[ k ] != null ) {
-      return this.pockets[ k ].asObservable().pipe(
-        takeUntil( o ),
-        eventFilter(),
-        pocketReceiverFilter( receiver, { enforceSelf } ),
-      ) as Observable<PocketData>;
-    }
-    this.register( k );
-    return this.pockets[ k ].asObservable().pipe(
+    if ( this.pockets[ k ] == null ) { this.register( k ); }
+    return this.pockets[ k ].asObservable( opts ? opts.subscriberID : null ).pipe(
       takeUntil( o ),
       eventFilter(),
       pocketReceiverFilter( receiver, { enforceSelf } ),
@@ -220,18 +230,11 @@ export class PocketService {
   }
 
   // create an action subject and return an observable with a takeUntil operator piped in
-  actionUntil( k: string, o: Observable<any> | Subject<any>, p: PocketPipeParams = null ): Observable<PocketActionData> {
+  actionUntil( k: string, o: Observable<any> | Subject<any>, p: PocketPipeParams = null, opts: PocketDebug = null ): Observable<PocketActionData> {
     const { caller, receiver, filter, enforceSelf, } =
       { caller: null, receiver: null, filter: null, enforceSelf: false, ...p };
-    if ( this.actions[ k ] != null ) {
-      return this.actions[ k ].asObservable().pipe(
-        takeUntil( o ),
-        eventFilter(),
-        pocketReceiverFilter( receiver, { enforceSelf } ),
-      ) as Observable<PocketActionData>;
-    }
-    this.register( k, true );
-    return this.actions[ k ].asObservable().pipe(
+    if ( this.actions[ k ] == null ) { this.register( k, true ); }
+    return this.actions[ k ].asObservable( opts ? opts.subscriberID : null ).pipe(
       takeUntil( o ),
       eventFilter(),
       pocketReceiverFilter( receiver, { enforceSelf } ),
@@ -239,23 +242,34 @@ export class PocketService {
   }
 
   // operate on pockets subjects
-  next( k: string, v: Record<any, any>, o: PocketNextParams = null ) {
+  next( k: string, v: Record<any, any>, o: PocketNextParams = null, debug = false ) {
     const { caller, receiver, filter, emitEvent, } =
       { caller: null, receiver: null, filter: null, emitEvent: true, ...o };
-    // console.log( 'next' );
+
+    if ( debug ) { console.log( `k:${k},v:${JSON.stringify( v )},o:${JSON.stringify( o )}` ); }
+
     if ( !v ) { return null; }
     if ( this.pockets[ k ] == null ) { throw new Error( `${this.module}: next called before registration on ${k} : ${stackTrace()}` ); }
     const value: PocketData = this.pockets[ k ].value || { new: null };
     value.new = value.new ? value.new : {};
     value.old = value.old ? value.old : {};
+
+    if ( debug ) { console.log( `before:: old:${JSON.stringify( value.old )},new:${JSON.stringify( value.new )}` ); };
+
     for ( const i of Object.keys( v ) ) {
       value.old[ i ] = value.new[ i ];
       value.new[ i ] = ( typeof v[ i ] === 'object' ) ? R.clone( v[ i ] ) : v[ i ];
     }
+
+    if ( debug ) { console.log( `after:: old:${JSON.stringify( value.old )},new:${JSON.stringify( value.new )}` ); };
+
     value.caller = caller;
     value.receiver = receiver;
     value.filter = filter;
     value.emitEvent = emitEvent;
+
+    if ( debug ) { console.log( `value:: ${JSON.stringify( value )}` ); };
+
     this.pockets[ k ].next( value as PocketData );
   }
 
@@ -289,28 +303,49 @@ export class PocketService {
   }
 
   // pockets only
-  value<T>( k: string, sub = null ) {
-    if ( this.pockets[ k ] == null ) { return null; }
+  value<T>( registeredKey: string, sub = null ) {
+    if ( this.pockets[ registeredKey ] == null ) { return null; }
     if ( sub ) {
-      if ( this.pockets[ k ].value.new[ sub ] == null ) { return null; }
-      else { return this.pockets[ k ].value.new[ sub ] as T; }
+      if ( this.pockets[ registeredKey ].value.new && this.pockets[ registeredKey ].value.new[ sub ] == null ) { return null; }
+      else { return this.pockets[ registeredKey ].value.new[ sub ] as T; }
     }
-    return this.pockets[ k ].value.new as T;
+    return this.pockets[ registeredKey ].value.new as T;
   }
 
   // pockets only
-  oldValue<T>( k: string, sub = null ) {
-    if ( this.pockets[ k ] == null ) { return null; }
+  oldValue<T>( registeredKey: string, sub = null ) {
+    if ( this.pockets[ registeredKey ] == null ) { return null; }
     if ( sub ) {
-      if ( this.pockets[ k ].value.old[ sub ] == null ) { return null; }
-      else { return this.pockets[ k ].value.old[ sub ] as T; }
+      if ( this.pockets[ registeredKey ].value.old && this.pockets[ registeredKey ].value.old[ sub ] == null ) { return null; }
+      else { return this.pockets[ registeredKey ].value.old[ sub ] as T; }
     }
-    return this.pockets[ k ].value.old as T;
+    return this.pockets[ registeredKey ].value.old as T;
+  }
+
+  // pockets only
+  val<T>( v: any, dataKey: string, subDataKey = null ) {
+    if ( v == null || v.new == null || v.new[ dataKey ] == null ) { return null; }
+    if ( subDataKey ) {
+      if ( v.new[ dataKey ] && v.new[ dataKey ][ subDataKey ] == null ) { return null; }
+      else { return v.new[ dataKey ][ subDataKey ] as T; }
+    }
+    return v.new[ dataKey ] as T;
+  }
+
+  // pockets only
+  old<T>( v: any, dataKey: string, subDataKey = null ) {
+    if ( v == null || v.old == null || v.old[ dataKey ] == null ) { return null; }
+    if ( subDataKey ) {
+      if ( v.old[ dataKey ] && v.old[ dataKey ][ subDataKey ] == null ) { return null; }
+      else { return v.old[ dataKey ][ subDataKey ] as T; }
+    }
+
+    return v.old[ dataKey ] as T;
   }
 
   // (pockets only) returns true if the [k][sub | optional] is not null
   check( k: string, sub = null ): boolean {
-    if ( this.pockets[ k ] == null || this.pockets[ k ].value == null ) { return false; }
+    if ( this.pockets[ k ] == null || this.pockets[ k ].value == null || this.pockets[ k ].value.new == null ) { return false; }
     if ( this.pockets[ k ].value.new[ sub ] == null ) { return false; }
     return true;
   }
@@ -377,7 +412,7 @@ export class PocketService {
     if ( !p.old ) { return true; }
     if ( !p.new[ k ] ) { return true; }
     if ( !p.old[ k ] ) { return true; }
-    return relaxed ? p.new[ k ][ f ] == p.new[ k ][ f ] : p.new[ k ][ f ] === p.new[ k ][ f ];
+    return relaxed ? p.old[ k ][ f ] != p.new[ k ][ f ] : p.old[ k ][ f ] !== p.new[ k ][ f ];
   }
 
   debug( k: string, inaction = false ) {
@@ -406,5 +441,8 @@ export class PocketService {
     }
 
     return out;
+  }
+
+  private tagObserver( s: BehaviorSubject<any>, o: Observable<PocketData | PocketActionData>, tag: string ) {
   }
 }
